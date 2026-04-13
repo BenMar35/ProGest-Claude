@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Compte Rendu n° {{ report_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 15mm;
+            margin-bottom: 30mm; /* Espace réservé pour le pied de page sur chaque page */
+            
+            @bottom-center {
+                content: element(footer);
+            }
+        }
+
+        body {
+            font-family: 'Quicksand', sans-serif;
+            font-size: 10pt;
+            color: #000;
+            line-height: 1.3;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Styles du Pied de Page (Footer) */
+        #footer {
+            position: running(footer); /* Indique au PDF d'utiliser ce bloc en bas de page */
+            width: 100%;
+            border-top: 1px solid #D6D6D6;
+            padding-top: 10px;
+            font-size: 8pt;
+            color: #666;
+            text-align: center;
+        }
+
+        .footer-content {
+            display: table;
+            width: 100%;
+        }
+
+        .footer-col {
+            display: table-cell;
+            width: 33%;
+            vertical-align: top;
+            padding: 0 5px;
+        }
+
+        /* Pagination */
+        .page-counter::after {
+            content: counter(page) " / " counter(pages);
+        }
+
+        /* 1. HEADER : Logo + Coordonnées */
+        .header {
+            display: table;
+            width: 100%;
+            margin-bottom: 25px;
+        }
+
+        .header-logo {
+            display: table-cell;
+            width: 40%;
+            vertical-align: top;
+        }
+
+        .header-logo img {
+            max-width: 180px;
+        }
+
+        .header-coords {
+            display: table-cell;
+            width: 60%;
+            text-align: right;
+            vertical-align: top;
+            font-size: 9pt;
+            color: #666;
+        }
+
+        /* 2. TITRE DU CR */
+        .report-main-title {
+            font-size: 16pt;
+            font-weight: bold;
+            text-align: center;
+            background-color: #000;
+            color: #FFF;
+            padding: 10px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        /* 3. NOM ET ADRESSE OPÉRATION */
+        .operation-details {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .operation-name {
+            font-size: 14pt;
+            font-weight: bold;
+            color: #FFD100;
+            margin-bottom: 5px;
+        }
+
+        .operation-address {
+            font-style: italic;
+            color: #333;
+        }
+
+        /* 4. SECTIONS ET TABLEAUX */
+        .section-title {
+            background-color: #FFD100;
+            padding: 4px 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 11pt;
+            margin-top: 25px;
+            margin-bottom: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+
+        th {
+            background-color: #EDEBDF;
+            text-align: left;
+            padding: 6px 8px;
+            border-bottom: 2px solid #D6D6D6;
+            font-size: 8pt;
+            font-weight: bold;
+        }
+
+        td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #EEE;
+            vertical-align: top;
+            font-size: 8.5pt;
+        }
+
+        .row-group {
+            background-color: #F6F5EB;
+            font-weight: bold;
+            font-size: 9pt;
+        }
+
+        /* PHOTOS */
+        .photos-grid {
+            display: table;
+            width: 100%;
+            margin-top: 15px;
+        }
+
+        .photo-cell {
+            display: table-cell;
+            width: 50%;
+            padding: 5px;
+            text-align: center;
+        }
+
+        .photo-cell img {
+            max-width: 100%;
+            border: 1px solid #D6D6D6;
+            border-radius: 2px;
+        }
+
+        /* OBSERVATIONS */
+        .observations-box {
+            white-space: pre-wrap;
+            padding: 10px;
+            border-left: 4px solid #FFD100;
+            background-color: #FDFDFD;
+            min-height: 40px;
+        }
+
+        /* SUIVI TÂCHES */
+        .task-green { color: #15803d; font-weight: bold; }
+        .task-red { color: #b91c1c; font-weight: bold; }
+        .task-black { color: #000000; }
+        .task-strikethrough { text-decoration: line-through; color: #999; }
+
+    </style>
+</head>
+<body>
+
+    <!-- 1. LOGO ET COORDONNÉES -->
+    <div class="header">
+        <div class="header-logo">
+            <img src="logo.png" alt="Logo">
+        </div>
+        <div class="header-coords">
+            02 90 02 26 95<br>
+            1 rue du Louis d’Or<br>
+            35000 RENNES
+        </div>
+    </div>
+
+    <!-- 2. ANNONCE DU CR -->
+    <div class="report-main-title">
+        COMPTE RENDU n° {{ report_number|default('00') }} du {{ report_date|default('JJ/MM/AAAA') }} à {{ report_time|default('--:--') }}
+    </div>
+
+    <!-- 3. NOM DE L'OPÉRATION -->
+    <div class="operation-details">
+        <div class="operation-name">{{ metadata.projectName|default('NOM DE L\'OPÉRATION') }}</div>
+        <!-- 4. ADRESSE DU SITE -->
+        <div class="operation-address">{{ metadata.projectAddress|default('Adresse du site du projet') }}</div>
+    </div>
+
+    <!-- 5. TABLEAU MAITRISE D'OUVRAGE -->
+    <div class="section-title">Maitrise d'ouvrage</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 25%;">Nom / Client</th>
+                <th style="width: 25%;">Contact / Rôle</th>
+                <th style="width: 40%;">Adresse / Coordonnées</th>
+                <th style="width: 10%; text-align: center;">P</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for mo_id, mo in attendance.mo.items() %}
+            <tr>
+                <td>{{ mo.nom|default('N/A') }}</td>
+                <td>{{ mo.contact|default('-') }}</td>
+                <td>{{ mo.adresse|default('') }}<br>{{ mo.coordonneesContact|default('') }}</td>
+                <td style="text-align: center;">{{ 'X' if mo.present else '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 6. TABLEAU MISSIONS -->
+    <div class="section-title">Missions</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 25%;">Mission</th>
+                <th style="width: 25%;">Raison Sociale / Contact</th>
+                <th style="width: 40%;">Adresse / Coordonnées</th>
+                <th style="width: 10%; text-align: center;">P</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m_id, m in attendance.missions.items() %}
+            <tr>
+                <td>{{ m.mission|default('Mission') }}</td>
+                <td>{{ m.raisonSociale }}<br><small>{{ m.contact }}</small></td>
+                <td>{{ m.adresse }}<br>{{ m.contactInfo }}</td>
+                <td style="text-align: center;">{{ 'X' if m.present else '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 7. TABLEAU ENTREPRISES -->
+    <div class="section-title">Entreprises</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 20%;">Lot</th>
+                <th style="width: 25%;">Entreprise / Contact</th>
+                <th style="width: 35%;">Adresse / Portable / Email</th>
+                <th style="width: 5%; text-align: center;">P</th>
+                <th style="width: 5%; text-align: center;">A</th>
+                <th style="width: 10%; text-align: center;">C</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for group in task_groups if group.intervenantType == 'entreprise' %}
+            <tr class="row-group">
+                <td colspan="6">{{ group.lotInfo }}</td>
+            </tr>
+            {% set att = attendance.companies[group.intervenantId] %}
+            <tr>
+                <td>{{ group.lotInfo }}</td>
+                <td><strong>{{ group.displayName }}</strong></td>
+                <td>
+                    {% for contact in att.selectedContacts %}
+                        {{ contact.nom }} ({{ contact.portable }})<br>
+                    {% endfor %}
+                </td>
+                <td style="text-align: center;">{{ 'X' if att.status == 'Pres.' else '' }}</td>
+                <td style="text-align: center;">{{ att.absences if att.absences else '0' }}</td>
+                <td style="text-align: center;">{{ 'X' if att.convoque else '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 8. PHOTOS -->
+    {% if photos and (photos[0] or photos[1]) %}
+    <div class="section-title">Photos</div>
+    <div class="photos-grid">
+        {% if photos[0] %}
+        <div class="photo-cell">
+            <img src="{{ photos[0] }}" alt="Chantier Photo 1">
+        </div>
+        {% endif %}
+        {% if photos[1] %}
+        <div class="photo-cell">
+            <img src="{{ photos[1] }}" alt="Chantier Photo 2">
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- 9. OBSERVATIONS GÉNÉRALES -->
+    <div class="section-title">Observations Générales</div>
+    <div class="observations-box">
+        {% for line in observations %}
+            {{ line }}<br>
+        {% endfor %}
+    </div>
+
+    <!-- 10. SUIVI DES TÂCHES -->
+    <div class="section-title">Suivi des tâches</div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 25%;">Intervenant / Lot</th>
+                <th style="width: 55%;">Tâche / Observation</th>
+                <th style="width: 10%; text-align: center;">Date</th>
+                <th style="width: 10%; text-align: center;">État</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for group in task_groups %}
+                {% for task in group.tasks %}
+                <tr>
+                    <td>
+                        {% if loop.first %}
+                        <strong>{{ group.lotInfo }}</strong><br>
+                        <small>{{ group.displayName }}</small>
+                        {% endif %}
+                    </td>
+                    <td class="task-{{ task.color }} {{ 'task-strikethrough' if task.status == 'NON' else '' }}">
+                        {{ task.comment }}
+                    </td>
+                    <td style="text-align: center;">{{ task.provisionalDate }}</td>
+                    <td style="text-align: center;">{{ task.status }}</td>
+                </tr>
+                {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- PIED DE PAGE (Footer textuel propre) -->
+    <div id="footer">
+        <div class="footer-content">
+            <div class="footer-col" style="text-align: left;">
+                <strong>COORDONNÉES</strong><br>
+                1 rue du Louis d’Or<br>
+                35000 RENNES
+            </div>
+            <div class="footer-col" style="text-align: center;">
+                <strong>CONTACT</strong><br>
+                Tél : 02 90 02 26 95<br>
+                Email : contact@votre-agence.com
+            </div>
+            <div class="footer-col" style="text-align: right;">
+                <strong>INFOS LÉGALES</strong><br>
+                SIRET : 000 000 000 00000<br>
+                RCS RENNES - Code APE 7111Z
+            </div>
+        </div>
+        <div style="margin-top: 8px; font-style: italic; color: #999;">
+            Page <span class="page-counter"></span>
+        </div>
+    </div>
+
+</body>
+</html>
