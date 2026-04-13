@@ -1,0 +1,417 @@
+"use client";
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import LeftSidebar from '@/components/LeftSidebar';
+import RightSidebar from '@/components/RightSidebar';
+import { AllotmentRow } from '@/components/AllotmentTable';
+import CompanyListingTable, { CompanyRow } from '@/components/CompanyListingTable';
+import TenderTrackingTable, { TenderTrackingRow } from '@/components/TenderTrackingTable';
+import AccountingSummaryTable from '@/components/AccountingSummaryTable';
+import ExecutionPhase, { TaskGroup } from '@/components/ExecutionPhase';
+import PlanningDialog from '@/components/PlanningDialog';
+import { ZoomIn, ZoomOut, Maximize2, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { StakeholderCompany } from '@/components/StakeholderCompanyTable';
+import { MaitriseOuvrage, Mission } from '@/components/StakeholdersDialog';
+import EstimationTable, { EstimationRow } from '@/components/EstimationTable';
+import DocumentBox, { DocumentPlan } from '@/components/DocumentBox';
+import FaisaEsquisse from '@/components/FaisaEsquisse';
+import ReceptionPhase from '@/components/ReceptionPhase';
+import { supabase } from '@/integrations/supabase/client';
+import { showError, showSuccess } from '@/utils/toast';
+import { generateId } from "@/lib/utils";
+import PhaseContainer from '@/components/PhaseContainer';
+import { PHASE_GAP } from "@/lib/constants";
+import CanvasAllotment from '@/components/CanvasAllotment';
+import CanvasMaitriseOuvrage from '@/components/CanvasMaitriseOuvrage';
+
+const parseCurrency = (value: string): number | null => {
+  if (!value) return null;
+  const numberString = value.replace(/€/g, '').replace(/\s/g, '').replace(',', '.');
+  const parsed = parseFloat(numberString);
+  return isNaN(parsed) ? null : parsed;
+};
+
+const getLatestOffer = (row: TenderTrackingRow): number | null => {
+  if (!row.offres || row.offres.length === 0) return null;
+  for (let i = row.offres.length - 1; i >= 0; i--) {
+    const offerValue = parseCurrency(row.offres[i]);
+    if (offerValue !== null) return offerValue;
+  }
+  return null;
+};
+
+interface ProjectCanvasProps {
+  projectId: string;
+  projectName: string;
+  projectAddress: string;
+}
+
+// Définition des phases avec Maîtrise d'Ouvrage en premier
+const initialPhases = [
+  { name: "Maîtrise d'Ouvrage" },
+  { name: "Faisa / Esquisse" },
+  { name: "Allotissement" },
+  { name: "Estimation" },
+  { name: "Consultation des entreprises" },
+  { name: "Suivi d'appel d'offres" },
+  { name: "Compta/Gestion Chantier" },
+  { name: "Execution des travaux" },
+  { name: "Opérations de réception" },
+  { name: "Boîte à Documents" },
+];
+
+const ProjectCanvas = ({ projectId, projectName, projectAddress }: ProjectCanvasProps) => {
+  const [lots, setLots] = useState<string[]>([]);
+  const [allotmentRows, setAllotmentRows] = useState<AllotmentRow[]>([]);
+  const [tenderTrackingRows, setTenderTrackingRows] = useState<TenderTrackingRow[]>([]);
+  const [estimationRows, setEstimationRows] = useState<EstimationRow[]>([]);
+  const [numOffers, setNumOffers] = useState(1);
+  const [manualMieuxDisantSelection, setManualMieuxDisantSelection] = useState<Record<string, string>>({});
+  const [openPhases, setOpenPhases] = useState<Record<string, boolean>>(
+    initialPhases.reduce((acc, phase) => ({ ...acc, [phase.name]: true }), {})
+  );
+  const [isPlanningOpen, setIsPlanningOpen] = useState(false);
+  const [stakeholderCompanies, setStakeholderCompanies] = useState<StakeholderCompany[]>([]);
+  const [projectCompanies, setProjectCompanies] = useState<CompanyRow[]>([]);
+  const [maitriseOuvrage, setMaitriseOuvrage] = useState<MaitriseOuvrage[]>([]);
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [plans, setPlans] = useState<DocumentPlan[]>([]);
+  const [taskGroups, setTaskGroups] = useState<TaskGroup[]>([]);
+  const [isLoadingProjectData, setIsLoadingProjectData] = useState(true);
+  const [phaseContentWidths, setPhaseContentWidths] = useState<Record<string, number>>({});
+
+  const [scale, setScale] = useState(1);
+  const [positionX, setPositionX] = useState(0);
+  const [positionY, setPositionY] = useState(0);
+  const [isTransformLoaded, setIsTransformLoaded] = useState(false);
+
+  const isSyncingRef = useRef(false);
+
+  useEffect(() => {
+    const savedScale = localStorage.getItem(`project_${projectId}_canvas_scale`);
+    const savedPositionX = localStorage.getItem(`project_${projectId}_canvas_positionX`);
+    const savedPositionY = localStorage.getItem(`project_${projectId}_canvas_positionY`);
+    if (savedScale) setScale(parseFloat(savedScale));
+    if (savedPositionX) setPositionX(parseFloat(savedPositionX));
+    if (savedPositionY) setPositionY(parseFloat(savedPositionY));
+    setIsTransformLoaded(true);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (isTransformLoaded) {
+      localStorage.setItem(`project_${projectId}_canvas_scale`, scale.toString());
+      localStorage.setItem(`project_${projectId}_canvas_positionX`, positionX.toString());
+      localStorage.setItem(`project_${projectId}_canvas_positionY`, positionY.toString());
+    }
+  }, [scale, positionX, positionY, projectId, isTransformLoaded]);
+
+  const handlePhaseWidthChange = useCallback((name: string, width: number) => {
+    setPhaseContentWidths(prev => {
+      if (Math.abs((prev[name] || 0) - width) < 5) return prev;
+      return { ...prev, [name]: width };
+    });
+  }, []);
+
+  const fetchProjectData = useCallback(async () => {
+    setIsLoadingProjectData(true);
+    try {
+      const [projCompanies, mo, ms, allots, ests, tenders, docs] = await Promise.all([
+        supabase.from('project_companies').select('*').eq('project_id', projectId),
+        supabase.from('project_maitrise_ouvrage').select('*').eq('project_id', projectId),
+        supabase.from('project_missions').select('*').eq('project_id', projectId),
+        supabase.from('allotments').select('*').eq('project_id', projectId),
+        supabase.from('project_estimations').select('*').eq('project_id', projectId),
+        supabase.from('tender_tracking_rows').select('*, project_companies(raison_sociale)').eq('project_id', projectId),
+        supabase.from('project_documents').select('*').eq('project_id', projectId),
+      ]);
+
+      if (projCompanies.data) setProjectCompanies(projCompanies.data.map(i => ({ ...i, raison_sociale: i.raison_sociale || '', ao_lots: i.ao_lots || [], compta_lots: i.compta_lots || [] })));
+      
+      if (mo.data) {
+        setMaitriseOuvrage(mo.data.map(i => ({ 
+          id: i.id, 
+          nom: i.nom_client, 
+          contact: i.contact_nom || '', 
+          adresse: i.adresse || '', 
+          codePostal: i.code_postal || '', 
+          ville: i.Ville || '',
+          coordonneesContact: i.telephone || '',
+          email: i.email || ''
+        })));
+      }
+      
+      if (ms.data) setMissions(ms.data.map(i => ({ id: i.id, mission: i.mission_name, raisonSociale: i.raison_sociale, contact: i.contact || '', adresse: i.adresse || '', contactInfo: i.contact_info || '' })));
+      
+      let currentAllotmentRows: AllotmentRow[] = [];
+      if (allots.data) {
+        currentAllotmentRows = allots.data.map(i => ({ id: i.id, selectedLot: i.selected_lot, selectedNumber: i.selected_number }));
+        if (currentAllotmentRows.length === 0) {
+          setAllotmentRows([{ id: generateId(), selectedLot: "", selectedNumber: "" }]);
+        } else {
+          setAllotmentRows(currentAllotmentRows);
+        }
+      }
+
+      if (ests.data) setEstimationRows(ests.data.map(i => ({ id: i.id, lotId: i.lot_id, description: i.description, unit: i.unit, quantity: i.quantity, unitPrice: i.unit_price, comment: i.comment || '', details: [], isDetailed: false })));
+      
+      if (tenders.data) {
+        const rows = tenders.data.map(i => ({
+          id: i.id,
+          lot: i.lot,
+          projectCompanyId: i.project_company_id,
+          raisonSociale: i.project_companies?.raison_sociale || 'N/A',
+          offres: i.offres || [],
+          commentaires: i.commentaires || [],
+          conformite: i.conformite as any || 'none'
+        }));
+        setTenderTrackingRows(rows.sort((a, b) => parseInt(a.lot) - parseInt(b.lot)));
+        const maxOffers = rows.reduce((max, r) => Math.max(max, r.offres.length), 1);
+        setNumOffers(maxOffers);
+      }
+      
+      if (docs.data) {
+        const groupedPlans = docs.data.reduce((acc, doc) => {
+          if (!acc[doc.plan_id]) {
+            acc[doc.plan_id] = { id: doc.plan_id, name: doc.plan_name, versions: [] };
+          }
+          acc[doc.plan_id].versions.push({
+            id: doc.version_id,
+            index: doc.version_index,
+            date: doc.version_date || '',
+            fileUrl: doc.file_url,
+            fileName: doc.file_name,
+          });
+          return acc;
+        }, {} as Record<string, DocumentPlan>);
+        
+        Object.values(groupedPlans).forEach(plan => {
+          plan.versions.sort((a, b) => a.index.localeCompare(b.index));
+        });
+        
+        setPlans(Object.values(groupedPlans));
+      }
+
+    } finally {
+      setIsLoadingProjectData(false);
+    }
+  }, [projectId]);
+
+  const syncTenderTrackingRowsWithDB = useCallback(async () => {
+    if (!projectId || isLoadingProjectData || isSyncingRef.current) return;
+    
+    isSyncingRef.current = true;
+    const currentPairs = new Set<string>();
+    projectCompanies.forEach(c => c.ao_lots.forEach(lot => currentPairs.add(`${c.id}-${lot}`)));
+
+    const existingRowsMap = new Map<string, TenderTrackingRow>();
+    tenderTrackingRows.forEach(r => existingRowsMap.set(`${r.projectCompanyId}-${r.lot}`, r));
+
+    const idsToDelete: string[] = [];
+    const rowsToUpsert: any[] = [];
+
+    existingRowsMap.forEach((row, key) => {
+      if (!currentPairs.has(key)) idsToDelete.push(row.id);
+    });
+
+    projectCompanies.forEach(company => {
+      company.ao_lots.forEach(lot => {
+        const key = `${company.id}-${lot}`;
+        const existing = existingRowsMap.get(key);
+        if (!existing) {
+          rowsToUpsert.push({ project_id: projectId, lot, project_company_id: company.id, offres: Array(numOffers).fill(""), commentaires: Array(numOffers).fill(""), conformite: "none" });
+        } else if (existing.offres.length !== numOffers) {
+          let newOffres = [...existing.offres];
+          let newComments = [...existing.commentaires];
+          if (newOffres.length < numOffers) {
+            newOffres = [...newOffres, ...Array(numOffers - newOffres.length).fill("")];
+            newComments = [...newComments, ...Array(numOffers - newComments.length).fill("")];
+          } else {
+            newOffres = newOffres.slice(0, numOffers);
+            newComments = newComments.slice(0, numOffers);
+          }
+          rowsToUpsert.push({ id: existing.id, project_id: projectId, lot, project_company_id: company.id, offres: newOffres, commentaires: newComments, conformite: existing.conformite });
+        }
+      });
+    });
+
+    if (idsToDelete.length > 0 || rowsToUpsert.length > 0) {
+      try {
+        if (idsToDelete.length > 0) await supabase.from('tender_tracking_rows').delete().in('id', idsToDelete);
+        if (rowsToUpsert.length > 0) await supabase.from('tender_tracking_rows').upsert(rowsToUpsert);
+        await fetchProjectData();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    isSyncingRef.current = false;
+  }, [projectId, projectCompanies, tenderTrackingRows, numOffers, isLoadingProjectData, fetchProjectData]);
+
+  useEffect(() => {
+    if (!isLoadingProjectData) syncTenderTrackingRowsWithDB();
+  }, [projectCompanies, numOffers, isLoadingProjectData, syncTenderTrackingRowsWithDB]);
+
+  useEffect(() => {
+    fetchProjectData();
+    supabase.from('master_lots').select('name').then(({ data }) => data && setLots(data.map(i => i.name)));
+    supabase.from('master_companies').select('*').then(({ data }) => data && setStakeholderCompanies(data.map(i => ({
+      id: i.id, raisonSociale: i.raison_sociale, adresse: i.adresse || '', codePostal: i.code_postal || '',
+      ville: i.ville || '', telephone: i.telephone || '', email: i.email || '', dept: i.dept || '', siret: i.siret || ''
+    }))));
+  }, [projectId, fetchProjectData]);
+
+  const lotNameMap = useMemo(() => new Map(allotmentRows.map(r => [r.selectedNumber, r.selectedLot])), [allotmentRows]);
+
+  const moinsDisantData = useMemo(() => {
+    const data = new Map<string, { minOffer: number; companyName: string }>();
+    const uniqueLots = [...new Set(tenderTrackingRows.map(r => r.lot))];
+    uniqueLots.forEach(lot => {
+      let min = Infinity, name = "";
+      tenderTrackingRows.filter(r => r.lot === lot).forEach(r => {
+        const offer = getLatestOffer(r);
+        if (offer !== null && offer < min) { min = offer; name = r.raisonSociale; }
+      });
+      if (min !== Infinity) data.set(lot, { minOffer: min, companyName: name });
+    });
+    return data;
+  }, [tenderTrackingRows]);
+
+  const mieuxDisantData = useMemo(() => {
+    const data = new Map<string, { minOffer: number; companyName: string }>();
+    const uniqueLots = [...new Set(tenderTrackingRows.map(r => r.lot))];
+    uniqueLots.forEach(lot => {
+      const selectedId = manualMieuxDisantSelection[lot];
+      const rows = tenderTrackingRows.filter(r => r.lot === lot && (r.id === selectedId || (r.conformite === 'oui' && !selectedId)));
+      let min = Infinity, name = "";
+      rows.forEach(r => {
+        const offer = getLatestOffer(r);
+        if (offer !== null && offer < min) { min = offer; name = r.raisonSociale; }
+      });
+      if (min !== Infinity) data.set(lot, { minOffer: min, companyName: name });
+    });
+    return data;
+  }, [tenderTrackingRows, manualMieuxDisantSelection]);
+
+  const companiesForTasks = useMemo(() => 
+    Array.from(mieuxDisantData.entries()).map(([lot, data]) => {
+      const companyDetail = projectCompanies.find(pc => pc.raison_sociale === data.companyName);
+      return {
+        id: `${lot}-${data.companyName}`,
+        lotNumber: lot,
+        lotName: lotNameMap.get(lot) || '',
+        raisonSociale: data.companyName,
+        companyDetail: companyDetail,
+      };
+    }).sort((a, b) => parseInt(a.lotNumber, 10) - parseInt(b.lotNumber, 10)),
+    [mieuxDisantData, lotNameMap, projectCompanies]
+  );
+
+  useEffect(() => {
+    const allIntervenants = [
+      ...maitriseOuvrage.map(mo => ({ id: mo.id, type: 'maitrise-ouvrage' as const, name: mo.nom, lotInfo: "Maîtrise d'ouvrage" })),
+      ...missions.map(m => ({ id: m.id, type: 'mission' as const, name: m.raisonSociale, lotInfo: 'Mission' })),
+      ...companiesForTasks.map(c => ({ id: c.id, type: 'entreprise' as const, name: c.raisonSociale, lotInfo: `Lot ${c.lotNumber} - ${c.lotName}` }))
+    ];
+    setTaskGroups(current => {
+      const currentMap = new Map(current.map(g => [g.intervenantId, g]));
+      const newGroups = allIntervenants.map(i => currentMap.get(i.id) || { intervenantId: i.id, intervenantType: i.type, displayName: i.name, lotInfo: i.lotInfo, tasks: [{ id: generateId(), comment: '', provisionalDate: '', completionDate: '', status: 'Vide' as const, color: 'green' as const }] });
+      return JSON.stringify(newGroups) !== JSON.stringify(current) ? newGroups : current;
+    });
+  }, [companiesForTasks, maitriseOuvrage, missions]);
+
+  const togglePhase = (name: string) => setOpenPhases(p => ({ ...p, [name]: !p[name] }));
+  
+  const openAllotmentPhase = () => {
+    setOpenPhases(p => ({ ...p, "Allotissement": true }));
+  };
+
+  const handleLotsUploadClick = () => {
+    showError("Veuillez utiliser le bouton 'Importer une liste de lots' dans la phase Allotissement.");
+  };
+
+  const totalContentWidth = useMemo(() => {
+    let w = 0;
+    initialPhases.forEach((p, i) => {
+      w += (phaseContentWidths[p.name] || (openPhases[p.name] ? 600 : 48));
+      if (i < initialPhases.length - 1) w += PHASE_GAP;
+    });
+    return Math.max(w, 2000);
+  }, [phaseContentWidths, openPhases]);
+
+  if (!isTransformLoaded) return <div className="h-screen w-screen flex items-center justify-center"><Loader2 className="animate-spin text-brand-yellow" /></div>;
+
+  return (
+    <div className="w-full h-full overflow-hidden">
+      <LeftSidebar 
+        setLots={setLots} setCompanies={setProjectCompanies} onOpenPlanning={() => setIsPlanningOpen(true)}
+        onOpenAllotmentPhase={openAllotmentPhase}
+        stakeholderCompanies={stakeholderCompanies} setStakeholderCompanies={setStakeholderCompanies}
+        maitriseOuvrage={maitriseOuvrage} setMaitriseOuvrage={setMaitriseOuvrage}
+        missions={missions} setMissions={setMissions}
+        allotmentRows={allotmentRows} setAllotmentRows={setAllotmentRows}
+        lots={lots} projectId={projectId} 
+        projectName={projectName}
+        projectAddress={projectAddress}
+        refreshMasterData={() => fetchProjectData()}
+        projectCompanies={projectCompanies} onSaveSuccess={fetchProjectData} onSaveProjectCompanies={() => Promise.resolve()}
+      />
+      <RightSidebar />
+      <TransformWrapper
+        initialScale={scale} initialPositionX={positionX} initialPositionY={positionY}
+        limitToBounds={false} minScale={0.1} maxScale={2}
+        panning={{ allowMiddleClickPan: true, allowLeftClickPan: false }}
+        onTransformed={ref => { setScale(ref.state.scale); setPositionX(ref.state.positionX); setPositionY(ref.state.positionY); }}
+      >
+        {({ zoomIn, zoomOut, resetTransform }) => (
+          <>
+            <div className="absolute bottom-4 right-4 z-10 flex space-x-2">
+              <Button onClick={() => zoomIn()} size="icon" className="bg-white text-black rounded-full shadow-md"><ZoomIn className="h-5 w-5" /></Button>
+              <Button onClick={() => zoomOut()} size="icon" className="bg-white text-black rounded-full shadow-md"><ZoomOut className="h-5 w-5" /></Button>
+              <Button onClick={() => resetTransform()} size="icon" className="bg-white text-black rounded-full shadow-md"><Maximize2 className="h-5 w-5" /></Button>
+            </div>
+            <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }}>
+              <div className="bg-white relative flex items-start gap-x-[50px] min-h-full" style={{ width: totalContentWidth }}>
+                {isLoadingProjectData && <div className="absolute inset-0 bg-white/50 flex items-center justify-center z-50"><Loader2 className="animate-spin h-10 w-10 text-brand-yellow" /></div>}
+                {initialPhases.map((phase, idx) => (
+                  <PhaseContainer key={phase.name} phaseName={phase.name} isOpen={openPhases[phase.name]} onToggle={() => togglePhase(phase.name)} isLastPhase={idx === initialPhases.length - 1} onWidthChange={handlePhaseWidthChange}>
+                    {phase.name === "Maîtrise d'Ouvrage" && (
+                      <CanvasMaitriseOuvrage 
+                        projectId={projectId}
+                        maitriseOuvrage={maitriseOuvrage}
+                        setMaitriseOuvrage={setMaitriseOuvrage}
+                        onSaveSuccess={fetchProjectData}
+                      />
+                    )}
+                    {phase.name === "Faisa / Esquisse" && <FaisaEsquisse />}
+                    {phase.name === "Allotissement" && (
+                      <CanvasAllotment
+                        allotmentRows={allotmentRows}
+                        setAllotmentRows={setAllotmentRows}
+                        lots={lots}
+                        projectId={projectId}
+                        refreshMasterData={() => {}}
+                        onSaveSuccess={fetchProjectData}
+                        onUploadLots={handleLotsUploadClick}
+                      />
+                    )}
+                    {phase.name === "Estimation" && <EstimationTable allotmentRows={allotmentRows} estimationRows={estimationRows} setEstimationRows={setEstimationRows} projectId={projectId} />}
+                    {phase.name === "Consultation des entreprises" && <CompanyListingTable availableLots={allotmentRows.map(r => r.selectedNumber).filter(Boolean)} rows={projectCompanies} setRows={setProjectCompanies} projectId={projectId} />}
+                    {phase.name === "Suivi d'appel d'offres" && <TenderTrackingTable rows={tenderTrackingRows} setRows={setTenderTrackingRows} allotmentRows={allotmentRows} numOffers={numOffers} setNumOffers={setNumOffers} manualMieuxDisantSelection={manualMieuxDisantSelection} setManualMieuxDisantSelection={setManualMieuxDisantSelection} moinsDisantData={moinsDisantData} mieuxDisantData={mieuxDisantData} onWidthChange={() => {}} projectId={projectId} />}
+                    {phase.name === "Compta/Gestion Chantier" && <AccountingSummaryTable projectId={projectId} mieuxDisantData={mieuxDisantData} projectCompanies={projectCompanies} />}
+                    {phase.name === "Execution des travaux" && <ExecutionPhase mieuxDisantData={mieuxDisantData} allotmentRows={allotmentRows} taskGroups={taskGroups} setTaskGroups={setTaskGroups} maitriseOuvrage={maitriseOuvrage} setMaitriseOuvrage={setMaitriseOuvrage} missions={missions} setMissions={setMissions} projectCompanies={projectCompanies} onSaveSuccess={fetchProjectData} />}
+                    {phase.name === "Opérations de réception" && <ReceptionPhase taskGroups={taskGroups} allotmentRows={allotmentRows} />}
+                    {phase.name === "Boîte à Documents" && <DocumentBox projectId={projectId} plans={plans} setPlans={setPlans} />}
+                  </PhaseContainer>
+                ))}
+              </div>
+            </TransformComponent>
+          </>
+        )}
+      </TransformWrapper>
+      <PlanningDialog isOpen={isPlanningOpen} onClose={() => setIsPlanningOpen(false)} allotmentRows={allotmentRows} maitriseOuvrage={maitriseOuvrage} missions={missions} />
+    </div>
+  );
+};
+
+export default ProjectCanvas;
