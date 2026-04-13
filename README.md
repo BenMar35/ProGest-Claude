@@ -1,1 +1,1 @@
-# ProGest-Claude
+# Welcome to your Dyad app
